@@ -1,4 +1,4 @@
-import { Controller, Header, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Controller, Header, Post, Request, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AppService } from './app.service.js';
@@ -9,8 +9,8 @@ export class AppController {
 
   @Post()
   @Header('Content-Type', 'text/plain; charset=utf-8')
-  async getHello(@Res() response: Response): Promise<void> {
-    const message = this.appService.getHello();
+  async getHello(@Request() request: any, @Res() response: Response): Promise<void> {
+    const message = await this.appService.getHello(request.body.param);
     const chunks = message.split('');
 
     response.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -29,7 +29,9 @@ export class AppController {
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(@UploadedFile() file: any, @Res() response: Response) {
     try {
-      const result = await this.appService.uploadPDF(file?.buffer, file?.originalname);
+      // const result = await this.appService.uploadPDF(file?.buffer, file?.originalname);
+      const result = await this.appService.uploadPDFWithTables(file?.buffer, file?.originalname);
+      
       response.json({
         message: 'File uploaded successfully',
         filename: file?.originalname,
@@ -38,8 +40,9 @@ export class AppController {
         summary: result.summary,
       });
     } catch (error) {
+      
       response.status(400).json({
-        message: error instanceof Error ? error.message : 'Upload failed',
+        message: error,
       });
     }
   }

@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ChatOpenAI } from '@langchain/openai';
 import { HttpService } from '@nestjs/axios';
 import {PDFParse} from 'pdf-parse';
+import PDFParser from 'pdf2json';
 type VolcanoSummaryResult = {
   extractedText: string;
   summary: string;
@@ -19,8 +19,8 @@ export class AppService {
       'qwen-turbo',
     );
   }
-  getHello(): string {
-    return 'Hello World!';
+  async getHello(param: string): Promise<string> {
+    return await this.callDashScope(param);
   }
 
   healthCheck(): string {
@@ -44,6 +44,7 @@ export class AppService {
       summary,
     };
   }
+  // pdf解析文本
   async extractPdfText(fileData: Buffer): Promise<string> {
     // 使用pdf-parse库提取PDF文本
     const pdfParse = new PDFParse({
@@ -52,6 +53,115 @@ export class AppService {
     const data = await pdfParse.getText();
     return data.text;
   }
+
+
+  async uploadPDFWithTables(
+    fileData: Buffer | undefined,
+    fileName?: string,
+  ): Promise<VolcanoSummaryResult> {
+    if (!fileData || fileData.length === 0) {
+      throw new Error('No PDF file uploaded');
+    }
+
+    const extractedTables = await this.extractPdfTables(fileData);
+    const extractedText = extractedTables.join('\n');
+    return {
+      extractedText: extractedText,
+      summary: extractedText
+    }
+  }
+  // pdf处理表格
+  async extractPdfTables(fileData: Buffer): Promise<string[]> {
+    const text = await this.extractPdfTextWithPdf2Json(fileData);
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private extractPdfTextWithPdf2Json(fileData: Buffer): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const pdfParser = new PDFParser(null, true);
+
+      pdfParser.on('pdfParser_dataError', (error) => {
+        reject(error instanceof Error ? error : String(error.parserError));
+      });
+
+      pdfParser.on('pdfParser_dataReady', () => {
+        try {
+          // Pages数据存在pdf扫描到的每一页的文本块信息，包含x,y坐标和文本内容
+          const pages = (pdfParser as any)?.data?.Pages ?? [];
+          const textBlocks: { x: number; y: number; text: string }[] = pages
+            .flatMap((page: any) => page?.Texts ?? [])
+            .map((textItem: any) => {
+              const text = (textItem?.R ?? [])
+                .map((run: any) => run?.T ?? '')
+                .join('');
+              const value = text ? text.replace(/\s+/g, ' ').trim() : '';
+              if (!value) {
+                return null;
+              }
+
+              return {
+                x: Number(textItem?.x ?? 0),
+                y: Number(textItem?.y ?? 0),
+                text: value,
+              };
+            })
+            .filter((item: { x: number; y: number; text: string } | null): item is { x: number; y: number; text: string } => !!item);
+          const orderedRows = AppService.groupPdfTextBlocks(textBlocks);
+          resolve(orderedRows.join('\n'));
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+
+      pdfParser.parseBuffer(fileData);
+    });
+  }
+
+  private normalizePdfTextRows(rawText: string): string[] {
+    const rows = rawText
+      .split(/\r?\n/)
+      .map((row) => row.trim())
+      .filter((row) => row.length > 0);
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    return rows
+      .map((row) => row.replace(/\s{2,}/g, '\t'))
+      .filter((row) => row.length > 0);
+  }
+
+  static groupPdfTextBlocks(
+    textBlocks: { x: number; y: number; text: string }[],
+  ): string[] {
+    if (textBlocks.length === 0) {
+      return [];
+    }
+
+    const sorted = [...textBlocks].sort((a, b) => a.y - b.y || a.x - b.x);
+    const rows: { y: number; cells: { x: number; text: string }[] }[] = [];
+
+    for (const item of sorted) {
+      let currentRow = rows.find((row) => Math.abs(row.y - item.y) <= 0.5);
+      if (!currentRow) {
+        currentRow = { y: item.y, cells: [] };
+        rows.push(currentRow);
+      }
+      currentRow.cells.push({ x: item.x, text: item.text });
+    }
+
+    return rows
+      .map((row) => ({
+        cells: row.cells.sort((a, b) => a.x - b.x),
+      }))
+      .map((row) => row.cells.map((cell) => cell.text).join('\t'))
+      .filter((row) => row.trim().length > 0);
+  }
+
   async callDashScope(prompt: string, model?: string) {
     //直接调用豆包大模型，添加重试机制
     const maxRetries = 2;

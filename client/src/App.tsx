@@ -3,6 +3,7 @@ import { api } from './api';
 
 export function App() {
   const [question, setQuestion] = useState('');
+  const [pdfContent, setPdfContent] = useState('');
   const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -10,7 +11,7 @@ export function App() {
     if (!question.trim()) return;
     setLoading(true);
     try {
-      const response = await api.post('/', { question });
+      const response = await api.post('/', { param: question });
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -22,7 +23,6 @@ export function App() {
           setAnswer(buffer);
         }
       }
-      console.log(buffer)
     } catch (err){
       console.log(err);
       setAnswer('请求失败，请稍后重试');
@@ -46,13 +46,22 @@ export function App() {
           const chunk = file.slice(start, end);
           formData.append('file', chunk, `${file.name}.part${i}`);
         }
+        // formData.append('password', password);
         try {
           const response = await api.upload('/upload', formData);
-          if (!response.ok) {
-            throw new Error(`Request failed: ${response.status}`);
-          }
           const result = await response.json();
-          console.log('Upload result:', result);
+          if (!response.ok) {
+            if(result && result.message) {
+              if(result.message.includes('PasswordException: No password given')) {
+                window.alert('PDF文件加密，请提供密码');
+              }
+            }
+          }
+          let extarctedText = "";
+          result.extractedText.split('\n').forEach((line: string) => {
+            extarctedText += line.trim() + '\n';
+          });
+          setPdfContent(extarctedText);
           setAnswer(`文件上传成功，总结：${result.summary}`);
         } catch (err) {
           console.error(err);
@@ -83,6 +92,12 @@ export function App() {
         onClick={inputPDF}>
         上传PDF
       </button>
+      {pdfContent && (
+        <div style={{ marginTop: 20 }}>
+          <h3>PDF内容：</h3>
+          <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>{pdfContent}</pre>
+        </div>
+      )}
       {answer && <p style={{ marginTop: 16 }}>{answer}</p>}
     </div>
   );
