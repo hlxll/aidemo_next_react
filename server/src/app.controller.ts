@@ -1,4 +1,5 @@
-import { Controller, Get, Header, Post, Req, Res } from '@nestjs/common';
+import { Controller, Header, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AppService } from './app.service.js';
 
@@ -24,8 +25,22 @@ export class AppController {
     response.end();
   }
 
-  @Get('health')
-  healthCheck(): string {
-    return this.appService.healthCheck();
+  @Post('/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadFile(@UploadedFile() file: any, @Res() response: Response) {
+    try {
+      const result = await this.appService.uploadPDF(file?.buffer, file?.originalname);
+      response.json({
+        message: 'File uploaded successfully',
+        filename: file?.originalname,
+        size: file?.size,
+        extractedText: result.extractedText,
+        summary: result.summary,
+      });
+    } catch (error) {
+      response.status(400).json({
+        message: error instanceof Error ? error.message : 'Upload failed',
+      });
+    }
   }
 }
