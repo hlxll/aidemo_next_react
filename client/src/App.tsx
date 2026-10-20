@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { api } from './api';
+import Password from './component/password';
 
 export function App() {
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
   const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(false);
-
+  const [openPass, setOpenPass] = useState(false)
+  const formDataParam = useRef(new FormData())
   const handleAsk = async () => {
     if (!question.trim()) return;
     setLoading(true);
@@ -46,16 +48,17 @@ export function App() {
           const chunk = file.slice(start, end);
           formData.append('file', chunk, `${file.name}.part${i}`);
         }
-        // formData.append('password', password);
         try {
           const response = await api.upload('/upload', formData);
           const result = await response.json();
           if (!response.ok) {
             if(result && result.message) {
               if(result.message.includes('PasswordException: No password given')) {
-                window.alert('PDF文件加密，请提供密码');
+                setOpenPass(true);
+                formDataParam.current = formData;
               }
             }
+            return;
           }
           let extarctedText = "";
           result.extractedText.split('\n').forEach((line: string) => {
@@ -70,6 +73,24 @@ export function App() {
     };
     input.click();
   };
+  const submitPassword=async (password:string)=>{
+    if(password){
+      try{
+        formDataParam.current.append('password', password);
+        const response = await api.upload('/upload', formDataParam.current);
+        const result = await response.json();
+        let extarctedText = "";
+        result.extractedText.split('\n').forEach((line: string) => {
+          extarctedText += line.trim() + '\n';
+        });
+        setPdfContent(extarctedText);
+        setAnswer(`文件上传成功，总结：${result.summary}`);
+      }catch(err){
+        console.log(err);
+      }
+      setOpenPass(false)
+    }
+  }
   return (
     <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
       <h1>FAQ 智能问答助手</h1>
@@ -99,6 +120,9 @@ export function App() {
         </div>
       )}
       {answer && <p style={{ marginTop: 16 }}>{answer}</p>}
+      {
+        openPass?<Password callback={submitPassword} open={openPass}/>:""
+      }
     </div>
   );
 }

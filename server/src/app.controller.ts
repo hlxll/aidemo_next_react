@@ -27,10 +27,10 @@ export class AppController {
 
   @Post('/upload')
   @UseInterceptors(FileInterceptor('file'))
-  async uploadFile(@UploadedFile() file: any, @Res() response: Response) {
+  async uploadFile(@UploadedFile() file: any, @Request() req: any,  @Res() response: Response) {
     try {
       // const result = await this.appService.uploadPDF(file?.buffer, file?.originalname);
-      const result = await this.appService.uploadPDFWithTables(file?.buffer, file?.originalname);
+      const result = await this.appService.uploadPDFWithTables(file?.buffer, file?.originalname, req.body.password);
       
       response.json({
         message: 'File uploaded successfully',

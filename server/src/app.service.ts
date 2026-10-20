@@ -58,12 +58,13 @@ export class AppService {
   async uploadPDFWithTables(
     fileData: Buffer | undefined,
     fileName?: string,
+    password?:string
   ): Promise<VolcanoSummaryResult> {
     if (!fileData || fileData.length === 0) {
       throw new Error('No PDF file uploaded');
     }
 
-    const extractedTables = await this.extractPdfTables(fileData);
+    const extractedTables = await this.extractPdfTables(fileData, password);
     const extractedText = extractedTables.join('\n');
     return {
       extractedText: extractedText,
@@ -71,17 +72,17 @@ export class AppService {
     }
   }
   // pdf处理表格
-  async extractPdfTables(fileData: Buffer): Promise<string[]> {
-    const text = await this.extractPdfTextWithPdf2Json(fileData);
+  async extractPdfTables(fileData: Buffer, password?:string): Promise<string[]> {
+    const text = await this.extractPdfTextWithPdf2Json(fileData, password);
     return text
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
   }
 
-  private extractPdfTextWithPdf2Json(fileData: Buffer): Promise<string> {
+  private extractPdfTextWithPdf2Json(fileData: Buffer, password?: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const pdfParser = new PDFParser(null, true);
+      const pdfParser = new PDFParser(null, true, password);
 
       pdfParser.on('pdfParser_dataError', (error) => {
         reject(error instanceof Error ? error : String(error.parserError));
