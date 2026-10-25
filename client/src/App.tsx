@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { api } from './api';
 import Password from './component/password';
-
+import { HumanMessage } from 'langchain';
 export function App() {
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
@@ -13,10 +13,11 @@ export function App() {
   const retriesTime = 1000;
   const handleAsk = async () => {
     if (!question.trim()) return;
+    await callbackFun(question);
     setLoading(true);
     let attempt = 0;
     while(attempt<maxRetries){
-try {
+    try {
       const response = await api.post('/', { param: question });
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -49,8 +50,9 @@ try {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.pdf';
-    input.onchange = async (event: any) => {
-      const file = event.target.files[0];
+    input.onchange = async (event: Event) => {
+      const target = event.target as HTMLInputElement;
+      const file = target.files[0];
       if (file) {
         const formData = new FormData();
         const sizeLimit = 10 * 1024 * 1024; // 10MB
@@ -103,6 +105,11 @@ try {
       }
       setOpenPass(false)
     }
+  }
+  // 处理输入内容，实现function callback
+  const callbackFun=async(text:string)=>{
+    const humanMessage = new HumanMessage(text);
+    console.log(humanMessage);
   }
   return (
     <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
