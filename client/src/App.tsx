@@ -9,10 +9,14 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [openPass, setOpenPass] = useState(false)
   const formDataParam = useRef(new FormData())
+  const maxRetries = 5;
+  const retriesTime = 1000;
   const handleAsk = async () => {
     if (!question.trim()) return;
     setLoading(true);
-    try {
+    let attempt = 0;
+    while(attempt<maxRetries){
+try {
       const response = await api.post('/', { param: question });
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
@@ -25,12 +29,21 @@ export function App() {
           setAnswer(buffer);
         }
       }
+      break;
     } catch (err){
       console.log(err);
       setAnswer('请求失败，请稍后重试');
+      await new Promise((resolve)=>{
+        setTimeout(()=>{
+          attempt++;
+          resolve(1);
+        }, retriesTime)
+      })
     } finally {
       setLoading(false);
     }
+    }
+    
   };
   const inputPDF = async () => {
     const input = document.createElement('input');
