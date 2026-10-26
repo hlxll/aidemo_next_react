@@ -1,51 +1,102 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { api } from './api';
 import Password from './component/password';
-import { HumanMessage } from 'langchain';
 export function App() {
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
   const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(false);
   const [openPass, setOpenPass] = useState(false)
+  const [listening, setListening] = useState(false);
   const formDataParam = useRef(new FormData())
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
   const maxRetries = 5;
   const retriesTime = 1000;
-  const handleAsk = async () => {
-    if (!question.trim()) return;
-    await callbackFun(question);
-    setLoading(true);
+  const threadIdMax30 = '1234567890'+ new Date().getTime();  //管理唯一的key，后期使用userid拼接
+  // 工具调用回答
+  const callbackFun = async ()=>{
     let attempt = 0;
     while(attempt<maxRetries){
-    try {
-      const response = await api.post('/', { param: question });
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          setAnswer(buffer);
+      try{
+        const response = await api.post('/chat', { message: question, threadId: threadIdMax30   });
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            console.log(buffer);
+            setAnswer(buffer);
+          }
         }
+        break;
+      } catch{
+        await new Promise((resolve)=>{
+          setTimeout(()=>{
+            attempt++;
+            resolve(1);
+          }, 5 * retriesTime)
+        })
+      } finally {
+        setLoading(false);
       }
-      break;
-    } catch (err){
-      console.log(err);
-      setAnswer('请求失败，请稍后重试');
-      await new Promise((resolve)=>{
-        setTimeout(()=>{
-          attempt++;
-          resolve(1);
-        }, retriesTime)
-      })
-    } finally {
-      setLoading(false);
     }
+  }
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  const openListen = async () => {
+    if (listening) {
+      mediaRecorderRef.current?.stop();
+      setListening(false);
+      return;
     }
-    
-  };
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      audioChunksRef.current = [];
+
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('audio', blob, 'recording.webm');
+
+        try {
+          const res = await api.upload('/audio', formData);
+          const data = await res.json();
+          if (res.ok && data?.text) {
+            setQuestion(data.text);
+          } else {
+            console.warn('语音识别失败:', data);
+          }
+        } catch (err) {
+          console.error('上传音频失败:', err);
+        }
+      };
+
+      mr.start();
+      setListening(true);
+    } catch (err) {
+      console.error('麦克风权限获取失败:', err);
+      alert('无法访问麦克风，请检查浏览器权限');
+    }
+  }
   const inputPDF = async () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -106,33 +157,43 @@ export function App() {
       setOpenPass(false)
     }
   }
-  // 处理输入内容，实现function callback
-  const callbackFun=async(text:string)=>{
-    const humanMessage = new HumanMessage(text);
-    console.log(humanMessage);
-  }
   return (
     <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
       <h1>FAQ 智能问答助手</h1>
-      <textarea
-        rows={3}
-        style={{ width: '100%', padding: 10 }}
-        placeholder="请输入你的问题"
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-      />
-      <button
-        disabled={loading}
-        onClick={handleAsk}
-        style={{ marginTop: 10, padding: '8px 16px' }}
-      >
-        {loading ? '正在回答…' : '发送'}
-      </button>
-      <button 
-        disabled={loading}
-        onClick={inputPDF}>
-        上传PDF
-      </button>
+      <div className="inputBar">
+        <textarea
+          rows={3}
+          placeholder="请输入你的问题"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+        />
+        <div className="footerButton">
+        <div>
+          <span 
+            title='上传PDF文件'
+            style={{cursor: 'pointer'}}
+            onClick={inputPDF}>
+            +
+          </span>
+        </div>
+        <div className='listenBtn'>
+          <span 
+            title={listening ? '停止录音' : '语音输入'}
+            className={listening ? 'active' : ''}
+            onClick={openListen}>
+            {listening ? '⏹️' : '🎤'}
+          </span>
+        </div>
+        <div>
+          <button
+            disabled={loading || !question.trim()}
+            onClick={callbackFun}
+          >
+            {loading ? '⏸️' : '⬆️'}
+          </button>
+        </div>
+      </div>
+      </div>
       {pdfContent && (
         <div style={{ marginTop: 20 }}>
           <h3>PDF内容：</h3>

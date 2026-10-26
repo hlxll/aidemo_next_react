@@ -46,4 +46,35 @@ export class AppController {
       });
     }
   }
+
+  @Post('/chat')
+  async chat(@Request() req: any, @Res() response: Response) {
+    try {
+      const result = await this.appService.callbackFun(req.body);
+      response.json({
+        message: result,
+      });
+    } catch (error) {
+      response.status(400).json({
+        message: error,
+        threadId: req.body.threadId,
+      });
+    }
+  }
+
+  @Post('/audio')
+  @UseInterceptors(FileInterceptor('audio'))
+  async transcribe(@UploadedFile() file: any, @Res() response: Response) {
+    try {
+      const text = await this.appService.transcribeAudio(
+        file?.buffer,
+        file?.originalname,
+      );
+      response.json({ text });
+    } catch (error: any) {
+      response.status(400).json({
+        message: error?.message || String(error),
+      });
+    }
+  }
 }

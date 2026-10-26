@@ -3,6 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import {PDFParse} from 'pdf-parse';
 import PDFParser from 'pdf2json';
+import { createAgent, tool } from "langchain";
+import { ChatOpenAI } from "@langchain/openai";
+import { MemorySaver } from "@langchain/langgraph";
+import { z } from "zod";
+
+
+
+
 type VolcanoSummaryResult = {
   extractedText: string;
   summary: string;
@@ -232,6 +240,139 @@ export class AppService {
       '';
 
     return { content };
+  }
+
+  async transcribeAudio(
+    fileData: Buffer | undefined,
+    fileName?: string,
+  ): Promise<string> {
+    if (!fileData || fileData.length === 0) {
+      throw new Error('No audio file uploaded');
+    }
+
+    const base64 = fileData.toString('base64');
+    const ext = fileName?.split('.').pop() || 'webm';
+    const format = ext === 'webm' ? 'webm' : ext === 'mp3' ? 'mp3' : ext === 'wav' ? 'wav' : 'webm';
+
+    const endpoint = this.configService.get<string>('ARK_ASR_ENDPOINT')
+      || this.configService.get<string>('ARK_ENDPOINT')
+      || 'ep-20250401181332-xxxxx';
+
+    const response = await this.httpService
+      .post(
+        'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+        {
+          model: endpoint,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'input_audio',
+                  input_audio: { data: base64, format },
+                },
+                {
+                  type: 'text',
+                  text: '请把这段语音中的内容识别出来，只返回识别到的文本，不要任何解释。',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.apiKey}`,
+          },
+          timeout: 60000,
+        },
+      )
+      .toPromise();
+
+    return (
+      response?.data?.choices?.[0]?.message?.content ??
+      response?.data?.choices?.[0]?.text ??
+      ''
+    );
+  }
+
+  async callbackFun(body:any) {
+    // 1. 模型配置
+    const model = new ChatOpenAI({
+      model: "ep-20250401181332-xxxxx", // 替换成你的推理接入点 ID
+      configuration: {
+        baseURL: "https://ark.cn-beijing.volces.com/api/v3",
+        apiKey: process.env.ARK_API_KEY,
+      },
+    });
+
+    // 2. 工具
+    const getWeather = tool(
+      async ({ city }) => {
+        const data: Record<string, string> = {
+          杭州: "杭州今天多云，18°C",
+          北京: "北京今天晴，12°C",
+          上海: "上海今天小雨，20°C",
+        };
+        return data[city] ?? `${city} 的天气暂时无法获取`;
+      },
+      {
+        name: "get_weather",
+        description: "查询指定城市的当前天气",
+        schema: z.object({
+          city: z.string().describe("城市名称"),
+        }),
+      }
+    );
+
+    // 3. Agent
+    const agent = createAgent({
+      model,
+      tools: [getWeather],
+      systemPrompt: "你是一个智能助手，需要天气信息时调用 get_weather。",
+      checkpointer: new MemorySaver(),
+    });
+
+    // 4. 流式接口
+    const POST = async () => {
+      const { message, threadId } = body;
+      if (!message) {
+        return new Response("缺少 message", { status: 400 });
+      }
+
+      const config = {
+        configurable: { thread_id: threadId || "default" },
+      };
+
+      const stream = await agent.stream(
+        { messages: [{ role: "user", content: message }] },
+        config
+      );
+      
+      const encoder = new TextEncoder();
+      const readable = new ReadableStream({
+        async start(controller) {
+          try {
+            for await (const chunk of stream) {
+              // const last = chunk.messages?.[chunk.messages.length - 1];
+              if (chunk.content) {
+                console.log("chunk.content", chunk.content)
+                controller.enqueue(encoder.encode(`${chunk.content}`));
+              }
+            }
+          } catch (err) {
+            controller.enqueue(encoder.encode(`\n[错误] ${err}`));
+          } finally {
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(readable, {
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+    return POST()
   }
 }
 
