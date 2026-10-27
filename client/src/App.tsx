@@ -12,15 +12,26 @@ export function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const abortController = useRef<AbortController | null>(null);
   const maxRetries = 5;
   const retriesTime = 1000;
   const threadIdMax30 = '1234567890'+ new Date().getTime();  //管理唯一的key，后期使用userid拼接
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
   // 工具调用回答
   const callbackFun = async ()=>{
     let attempt = 0;
     while(attempt<maxRetries){
       try{
-        const response = await api.post('/chat', { message: question, threadId: threadIdMax30   });
+        abortController.current = new AbortController();
+        const response = await api.post('/chat', { message: question, threadId: threadIdMax30},
+          {
+            signal: abortController.current.signal,
+          }
+        );
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -46,11 +57,12 @@ export function App() {
       }
     }
   }
-  useEffect(() => {
-    return () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
+  const stopCallback =()=>{
+    setLoading(false);
+    setAnswer('');
+    abortController.current?.abort();
+  }
+  
 
   const openListen = async () => {
     if (listening) {
@@ -186,8 +198,8 @@ export function App() {
         </div>
         <div>
           <button
-            disabled={loading || !question.trim()}
-            onClick={callbackFun}
+            disabled={!question.trim()}
+            onClick={()=>loading? stopCallback() : callbackFun()}
           >
             {loading ? '⏸️' : '⬆️'}
           </button>
