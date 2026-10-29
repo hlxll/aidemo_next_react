@@ -11,6 +11,8 @@ async function post(url: string, body: RequestBody, options?:{signal?: AbortSign
         body: JSON.stringify(body),
     });
     if (!response.ok) {
+        console.log(response)
+        // 如果含有AbortError类似的错误，是手动停止，不抛出错误，防止调用地方重试
         throw new Error(`Request failed: ${response.status}`);
     }
 

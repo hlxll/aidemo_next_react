@@ -7,7 +7,7 @@ import { createAgent, tool } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 import { MemorySaver } from "@langchain/langgraph";
 import { z } from "zod";
-
+import { PromptTemplate } from "@langchain/core/prompts"
 
 
 
@@ -343,9 +343,12 @@ export class AppService {
       const config = {
         configurable: { thread_id: threadId || "default" },
       };
-
+      const newMessage = PromptTemplate.fromTemplate(
+        '请解释:{mes}'
+      )
+      const newMes = await newMessage.format({mes: message})
       const stream = await agent.stream(
-        { messages: [{ role: "user", content: message }] },
+        { messages: [{ role: "user", content: newMes }] },
         config
       );
       
