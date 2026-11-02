@@ -8,6 +8,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [openPass, setOpenPass] = useState(false)
   const [listening, setListening] = useState(false);
+  const [tool, setTool] = useState('weather');
   const formDataParam = useRef(new FormData())
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -27,7 +28,7 @@ export function App() {
     while(attempt<maxRetries){
       try{
         abortController.current = new AbortController();
-        const response = await api.post('/chat', { message: question, threadId: threadIdMax30},
+        const response = await api.post('/chat', { message: question, threadId: threadIdMax30, tool },
           {
             signal: abortController.current.signal,
           }
@@ -188,6 +189,16 @@ export function App() {
             +
           </span>
         </div>
+        <select
+          className="toolSelect"
+          title='选择工具'
+          value={tool}
+          onChange={(e) => setTool(e.target.value)}
+        >
+          <option value='weather'>天气</option>
+          <option value='web'>联网</option>
+          <option value='canvas'>canvas</option>
+        </select>
         <div className='listenBtn'>
           <span 
             title={listening ? '停止录音' : '语音输入'}

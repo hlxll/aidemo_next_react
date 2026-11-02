@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import {PDFParse} from 'pdf-parse';
@@ -296,13 +296,13 @@ export class AppService {
     );
   }
 
-  async callbackFun(body:any) {
+  async callbackFun(body: any): Promise<ReadableStream<Uint8Array>> {
     // 1. 模型配置
     const model = new ChatOpenAI({
-      model: "ep-20250401181332-xxxxx", // 替换成你的推理接入点 ID
+      model: process.env.DASHSCOPE_DEFAULT_MODEL, // 替换成你的推理接入点 ID
       configuration: {
-        baseURL: "https://ark.cn-beijing.volces.com/api/v3",
-        apiKey: process.env.ARK_API_KEY,
+        baseURL: process.env.DASHSCOPE_API_URL,
+        apiKey: process.env.DASHSCOPE_API_KEY,
       },
     });
 
@@ -310,10 +310,11 @@ export class AppService {
     const getWeather = tool(
       async ({ city }) => {
         const data: Record<string, string> = {
-          杭州: "杭州今天多云，18°C",
+          杭州: "杭州今天多云，20°C",
           北京: "北京今天晴，12°C",
           上海: "上海今天小雨，20°C",
         };
+        console.log("获取天气", city)
         return data[city] ?? `${city} 的天气暂时无法获取`;
       },
       {
@@ -333,49 +334,69 @@ export class AppService {
       checkpointer: new MemorySaver(),
     });
 
-    // 4. 流式接口
-    const POST = async () => {
-      const { message, threadId } = body;
-      if (!message) {
-        return new Response("缺少 message", { status: 400 });
-      }
-
-      const config = {
-        configurable: { thread_id: threadId || "default" },
-      };
-      const newMessage = PromptTemplate.fromTemplate(
-        '请解释:{mes}'
-      )
-      const newMes = await newMessage.format({mes: message})
-      const stream = await agent.stream(
-        { messages: [{ role: "user", content: newMes }] },
-        config
-      );
-      
-      const encoder = new TextEncoder();
-      const readable = new ReadableStream({
-        async start(controller) {
-          try {
-            for await (const chunk of stream) {
-              // const last = chunk.messages?.[chunk.messages.length - 1];
-              if (chunk.content) {
-                console.log("chunk.content", chunk.content)
-                controller.enqueue(encoder.encode(`${chunk.content}`));
-              }
-            }
-          } catch (err) {
-            controller.enqueue(encoder.encode(`\n[错误] ${err}`));
-          } finally {
-            controller.close();
-          }
-        },
-      });
-
-      return new Response(readable, {
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
+    // 4. 流式接口：返回 ReadableStream，由 controller 边读边写给前端
+    const { message, threadId, tool: toolName } = body;
+    if (!message) {
+      throw new BadRequestException('缺少 message');
     }
-    return POST()
+
+    const config = {
+      configurable: { thread_id: threadId || 'default' },
+    };
+    const newMessage = PromptTemplate.fromTemplate('{mes}');
+    const newMes = await newMessage.format({ 
+      mes: toolName === 'weather' ? message : `请解释：${message}`
+    });
+
+    // updates 用来拿工具执行结果，messages 用来拿逐字回答
+    const stream = (await agent.stream(
+      { messages: [{ role: 'user', content: newMes }] },
+      { ...config, streamMode: ['updates', 'messages'] },
+    )) as AsyncIterable<[string, any]>;
+
+    const encoder = new TextEncoder();
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const [mode, payload] of stream) {
+            if (mode === 'messages') {
+              // payload 形如 [messageChunk, metadata]，只写文本增量
+              const chunk = payload?.[0];
+              // 工具返回的 ToolMessage 会在 messages 模式里再出现一次，这里跳过，
+              // 统一由下面的 updates 分支输出，避免重复
+              if (chunk?.type === 'tool') {
+                continue;
+              }
+              const text = chunk?.text ?? '';
+              if (text) {
+                controller.enqueue(encoder.encode(text));
+              }
+              continue;
+            }
+
+            // mode === 'updates'：工具节点执行完后，ToolMessage 在 payload.tools.messages 中
+            const toolMessages = payload?.tools?.messages;
+            if (Array.isArray(toolMessages) && toolMessages.length > 0) {
+              const toolMessage = toolMessages[toolMessages.length - 1];
+              const content =
+                typeof toolMessage?.content === 'string'
+                  ? toolMessage.content
+                  : JSON.stringify(toolMessage?.content ?? '');
+              controller.enqueue(
+                encoder.encode(
+                  `\n[工具 ${toolMessage?.name ?? 'tool'}] ${content}\n`,
+                ),
+              );
+            }
+          }
+        } catch (err: any) {
+          controller.enqueue(encoder.encode(`\n[错误] ${err?.message ?? err}`));
+        } finally {
+          controller.close();
+        }
+      },
+    });
   }
 }
 

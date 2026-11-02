@@ -50,15 +50,29 @@ export class AppController {
   @Post('/chat')
   async chat(@Request() req: any, @Res() response: Response) {
     try {
-      const result = await this.appService.callbackFun(req.body);
-      response.json({
-        message: result,
-      });
-    } catch (error) {
-      response.status(400).json({
-        message: error,
-        threadId: req.body.threadId,
-      });
+      const stream = await this.appService.callbackFun(req.body);
+
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-cache, no-transform');
+      response.setHeader('Connection', 'keep-alive');
+      response.setHeader('X-Accel-Buffering', 'no');
+
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        response.write(value);
+      }
+    } catch (error: any) {
+      if (response.headersSent) {
+        response.write(`\n[错误] ${error?.message ?? error}`);
+      } else {
+        response.status(400).json({ message: error?.message ?? String(error) });
+      }
+    } finally {
+      if (!response.writableEnded) {
+        response.end();
+      }
     }
   }
 
