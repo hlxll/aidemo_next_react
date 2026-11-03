@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import {PDFParse} from 'pdf-parse';
 import PDFParser from 'pdf2json';
-import { createAgent, tool } from "langchain";
+import { createAgent, SystemMessage, tool } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 import { MemorySaver } from "@langchain/langgraph";
 import { z } from "zod";
 import { PromptTemplate } from "@langchain/core/prompts"
+import { getChromaClient } from './chroma/index.js';
+import { getEmbedding } from './chroma/embedding.js';
 
 
 
@@ -15,6 +17,7 @@ type VolcanoSummaryResult = {
   extractedText: string;
   summary: string;
 };
+const client = getChromaClient();
 
 @Injectable()
 export class AppService {
@@ -330,7 +333,7 @@ export class AppService {
     const agent = createAgent({
       model,
       tools: [getWeather],
-      systemPrompt: "你是一个智能助手，需要天气信息时调用 get_weather。",
+      systemPrompt: "你是一个智能助手，需要天气信息时调用 get_weather,不要编造。",
       checkpointer: new MemorySaver(),
     });
 
@@ -343,14 +346,15 @@ export class AppService {
     const config = {
       configurable: { thread_id: threadId || 'default' },
     };
+
     const newMessage = PromptTemplate.fromTemplate('{mes}');
     const newMes = await newMessage.format({ 
       mes: toolName === 'weather' ? message : `请解释：${message}`
     });
-
+    const systemPrompt = new SystemMessage("本轮回答不超过20个字符");
     // updates 用来拿工具执行结果，messages 用来拿逐字回答
     const stream = (await agent.stream(
-      { messages: [{ role: 'user', content: newMes }] },
+      { messages: [systemPrompt, { role: 'user', content: newMes }] },
       { ...config, streamMode: ['updates', 'messages'] },
     )) as AsyncIterable<[string, any]>;
 
@@ -397,6 +401,59 @@ export class AppService {
         }
       },
     });
+  }
+
+  async chromaLocalSearch(req: { query: string; nResults?: number }) {
+    const { query, nResults = 4 } = req;
+    if (!query?.trim()) {
+      throw new BadRequestException('query 不能为空');
+    }
+
+    const collection = await client.getOrCreateCollection({
+      name: 'knowledge',
+    });
+
+    // 重要：查询和入库必须共用同一个 embedding，否则向量空间不一致
+    const queryVector = getEmbedding(query);
+
+    const result = await collection.query({
+      queryEmbeddings: [queryVector],
+      nResults,
+    });
+
+    return {
+      ids: result.ids?.[0] ?? [],
+      documents: result.documents?.[0] ?? [],
+      metadatas: result.metadatas?.[0] ?? [],
+      distances: result.distances?.[0] ?? [],
+    };
+  }
+
+  /**
+   * 用自定义 embedding 生成向量并入库。
+   * 依赖外部 ChromaDB server（默认 http://localhost:8000）。
+   */
+  async chromaLocalAddEmbedd(req: { text: string; id?: string }) {
+    const { text, id } = req;
+    if (!text?.trim()) {
+      throw new BadRequestException('text 不能为空');
+    }
+
+    const collection = await client.getOrCreateCollection({
+      name: 'knowledge',
+    });
+
+    const embedding = getEmbedding(text);
+    const docId = id ?? `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    await collection.add({
+      ids: [docId],
+      documents: [text],
+      embeddings: [embedding],
+      metadatas: [{ source: 'api', createdAt: Date.now() }],
+    });
+
+    return { id: docId, dimension: embedding.length };
   }
 }
 

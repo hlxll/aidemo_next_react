@@ -91,4 +91,28 @@ export class AppController {
       });
     }
   }
+
+  // 知识库查询
+  @Post('/search')
+  async search(@Request() req: any, @Res() response: Response) {
+    try {
+      const result = await this.appService.chromaLocalSearch(req.body);
+      response.json({ result });
+    } catch (error: any) {
+      response.status(400).json({
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  // 用自定义 embedding 入库
+  @Post('/addEmbedd')
+  async addEmbedd(@Request() req: any, @Res() response: Response) {
+    try {
+      const result = await this.appService.chromaLocalAddEmbedd(req.body);
+      response.status(200).json({ message: '添加成功', ...result });
+    } catch (error: any) {
+      response.status(400).json({ message: error?.message || String(error) });
+    }
+  }
 }

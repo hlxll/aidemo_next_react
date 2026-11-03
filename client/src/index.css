@@ -192,3 +192,132 @@ code {
     box-shadow: 0 0 0 6px transparent;
   }
 }
+
+/* 顶部导航 */
+.navBar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+
+  button {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+  }
+
+  button:hover {
+    background: var(--accent-bg);
+    border-color: var(--accent-border);
+    color: var(--text-h);
+  }
+
+  button.nav-active {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--text-h);
+  }
+}
+
+/* AddEmbeddPage */
+.pageWrap {
+  padding-top: 12px;
+}
+.pageWrap h1 {
+  font-size: 24px;
+  color: var(--text-h);
+  margin: 0 0 6px;
+}
+.pageWrap .hint {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.pageWrap .field {
+  display: block;
+  margin-bottom: 16px;
+
+  span {
+    display: block;
+    font-size: 14px;
+    color: var(--text-h);
+    margin-bottom: 6px;
+
+    em {
+      font-style: normal;
+      color: #e0483c;
+      margin-left: 2px;
+    }
+  }
+
+  textarea,
+  input[type='text'] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text-h);
+    font: inherit;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  textarea:focus,
+  input[type='text']:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-bg);
+  }
+}
+
+.pageWrap .actions button {
+  padding: 8px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  cursor: pointer;
+  font: inherit;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.pageWrap .actions button:hover:not(:disabled) {
+  background: rgba(170, 59, 255, 0.25);
+}
+.pageWrap .actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pageWrap .result {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.pageWrap .result-ok {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  color: #15803d;
+}
+.pageWrap .result-error {
+  background: rgba(224, 72, 60, 0.1);
+  border: 1px solid rgba(224, 72, 60, 0.4);
+  color: #b91c1c;
+}
+.pageWrap .result code {
+  background: var(--code-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+

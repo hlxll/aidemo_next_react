@@ -1,7 +1,50 @@
 import { useRef, useState, useEffect } from 'react';
 import { api } from './api';
 import Password from './component/password';
+import AddEmbeddPage from './component/AddEmbeddPage';
+
+/** 极简路径路由（零依赖）。Vite SPA 下配合 history API 工作 */
+function useRoute() {
+  const [path, setPath] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.location.pathname : '/',
+  );
+
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const navigate = (to: string) => {
+    window.history.pushState({}, '', to);
+    setPath(to);
+  };
+
+  return { path, navigate };
+}
+
+function NavBar({ path, navigate }: { path: string; navigate: (p: string) => void }) {
+  const items = [
+    { to: '/', label: 'FAQ 助手' },
+    { to: '/addEmbedd', label: '入库 Embedding' },
+  ];
+  return (
+    <nav className="navBar">
+      {items.map((it) => (
+        <button
+          key={it.to}
+          className={path === it.to ? 'nav-active' : ''}
+          onClick={() => navigate(it.to)}
+        >
+          {it.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export function App() {
+  const { path, navigate } = useRoute();
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
   const [answer, setAnswer] = useState('');
@@ -24,6 +67,23 @@ export function App() {
   }, []);
   // 工具调用回答
   const callbackFun = async ()=>{
+    if(tool === 'knowledge'){
+      setLoading(true);
+      const result = await api.post('/search', { query: question });
+      const reader = result.body.getReader();
+      let buffer = '';
+      const decoder = new TextDecoder();
+      while(true){
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        
+      }
+      const contents = JSON.parse(buffer.trim())?.result?.documents || [];
+      setAnswer(contents.join('\n') || '');
+      setLoading(false);
+      return;
+    }
     let attempt = 0;
     while(attempt<maxRetries){
       try{
@@ -170,8 +230,20 @@ export function App() {
       setOpenPass(false)
     }
   }
+
+  // 路由出口
+  if (path === '/addEmbedd') {
+    return (
+      <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
+        <NavBar path={path} navigate={navigate} />
+        <AddEmbeddPage />
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
+      <NavBar path={path} navigate={navigate} />
       <h1>FAQ 智能问答助手</h1>
       <div className="inputBar">
         <textarea
@@ -198,6 +270,7 @@ export function App() {
           <option value='weather'>天气</option>
           <option value='web'>联网</option>
           <option value='canvas'>canvas</option>
+          <option value='knowledge'>知识库</option>
         </select>
         <div className='listenBtn'>
           <span 
