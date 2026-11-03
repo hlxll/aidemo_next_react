@@ -6,7 +6,7 @@ async function post(url: string, body: RequestBody, options?:{signal?: AbortSign
         method: 'POST',
         signal: options?.signal,
         headers: {
-        'Content-Type': 'application/json',
+            'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
     });

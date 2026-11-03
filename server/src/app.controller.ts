@@ -1,5 +1,5 @@
-import { Controller, Header, Post, Request, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { Controller, Header, Post, Req, Request, Res, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { AppService } from './app.service.js';
 
@@ -26,19 +26,53 @@ export class AppController {
   }
 
   @Post('/upload')
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadFile(@UploadedFile() file: any, @Request() req: any,  @Res() response: Response) {
+  @UseInterceptors(FilesInterceptor('file'))
+  //UploadedFiles,接收上传文件
+  async uploadFile(
+    @UploadedFiles() files: any[],
+    @Request() req: any,
+    @Res() response: Response,
+  ) {
     try {
-      // const result = await this.appService.uploadPDF(file?.buffer, file?.originalname);
-      const result = await this.appService.uploadPDFWithTables(file?.buffer, file?.originalname, req.body.password);
+      if (!files?.length) {
+        throw new Error('No PDF file uploaded');
+      }
+      const partIndex = (name = '') => Number(name.split('.part').pop()) || 0;
+      const ordered = [...files].sort(
+        (a, b) => partIndex(a.originalname) - partIndex(b.originalname),
+      );
+      const merged: Buffer = Buffer.concat(
+        ordered.map((f) => f.buffer as Buffer),
+      );
+
+      console.log(
+        `收到 ${ordered.length} 个分片，合并后 ${merged.length} 字节`,
+      );
+      const fileName = ordered[0]?.originalname?.replace(/\.part\d+$/, '')
+      response.setHeader('Content-Type', 'application/json');
+      response.setHeader('Cache-Control', 'no-cache');
+      response.setHeader('Connection', 'keep-alive');
+      // 上传pdf，解析内容，返回结果
+      if(fileName?.endsWith('.pdf')){
+        const result = await this.appService.uploadPDFWithTables(merged, fileName, req.body.password);
+        response.json({
+          message: 'File uploaded successfully',
+          filename: fileName,
+          size: merged.length,
+          extractedText: result.extractedText,
+          summary: result.summary,
+        });  
+      }else{
+        // 上传docx，解析内容，拆分段落
+        const result = await this.appService.uploadDOCX(merged, fileName);
+        response.json({
+          message: 'File uploaded successfully',
+          filename: fileName,
+          size: merged.length,
+          chunks: result,
+        });  
+      }
       
-      response.json({
-        message: 'File uploaded successfully',
-        filename: file?.originalname,
-        size: file?.size,
-        extractedText: result.extractedText,
-        summary: result.summary,
-      });
     } catch (error) {
       
       response.status(400).json({
@@ -75,6 +109,19 @@ export class AppController {
       }
     }
   }
+
+  @Post('/getChatHistory')
+  async getChatHistory(@Request() req: any, @Res() response: Response) {
+    try {
+      const history = await this.appService.getChatHistory(req.body.threadId);
+      response.json({ history });
+    } catch (error: any) {
+      response.status(400).json({
+        message: error?.message || String(error),
+      });
+    }
+  }
+
 
   @Post('/audio')
   @UseInterceptors(FileInterceptor('audio'))

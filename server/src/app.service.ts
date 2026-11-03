@@ -11,6 +11,8 @@ import { PromptTemplate } from "@langchain/core/prompts"
 import { getChromaClient } from './chroma/index.js';
 import { getEmbedding } from './chroma/embedding.js';
 
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import mammoth from 'mammoth';
 
 
 type VolcanoSummaryResult = {
@@ -65,6 +67,23 @@ export class AppService {
     return data.text;
   }
 
+  // 解析docx，拆分内容，存入向量数据库
+  async uploadDOCX(fileData: Buffer, fileName?: string){
+    if (!fileData || fileData.length === 0) {
+      throw new Error('No DOCX file uploaded');
+    }
+    const textSplitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1000,
+      chunkOverlap: 100,
+      separators: ['\n\n', '\n', ' ', '.', '。', '!', '?', '；', '，'],
+      lengthFunction: (text: string) => text.length,
+    });
+    // DOCX 是 zip 压缩包（二进制），不能直接 TextDecoder 解码，
+    // 必须用 mammoth 解包并从 document.xml 抽取纯文本
+    const { value: text } = await mammoth.extractRawText({ buffer: fileData });
+    const chunks = await textSplitter.splitText(text);
+    return chunks;
+  }
 
   async uploadPDFWithTables(
     fileData: Buffer | undefined,
@@ -299,8 +318,20 @@ export class AppService {
     );
   }
 
-  async callbackFun(body: any): Promise<ReadableStream<Uint8Array>> {
-    // 1. 模型配置
+  /**
+   * 全局共享的会话记忆，必须与 getAgent 创建的 agent 是同一个实例，
+   * 否则对话历史和 callbackFun 的上下文各存各的，读不到。
+   */
+  private readonly checkpointer = new MemorySaver();
+
+  private agentInstance: ReturnType<typeof createAgent> | null = null;
+
+  /** 懒加载单例 agent，保证 checkpointer 跨请求共享 */
+  private getAgent(): ReturnType<typeof createAgent> {
+    if (this.agentInstance) {
+      return this.agentInstance;
+    }
+
     const model = new ChatOpenAI({
       model: process.env.DASHSCOPE_DEFAULT_MODEL, // 替换成你的推理接入点 ID
       configuration: {
@@ -309,7 +340,6 @@ export class AppService {
       },
     });
 
-    // 2. 工具
     const getWeather = tool(
       async ({ city }) => {
         const data: Record<string, string> = {
@@ -329,13 +359,50 @@ export class AppService {
       }
     );
 
-    // 3. Agent
-    const agent = createAgent({
+    this.agentInstance = createAgent({
       model,
       tools: [getWeather],
       systemPrompt: "你是一个智能助手，需要天气信息时调用 get_weather,不要编造。",
-      checkpointer: new MemorySaver(),
+      checkpointer: this.checkpointer,
     });
+
+    return this.agentInstance;
+  }
+
+  /** 查询某个会话（threadId）的历史消息 */
+  async getChatHistory(threadId: string) {
+    if (!threadId) {
+      throw new BadRequestException('threadId 不能为空');
+    }
+
+    const agent = this.getAgent();
+    const snapshot: any = await agent.getState({
+      configurable: { thread_id: threadId },
+    });
+
+    const messages: any[] = snapshot?.values?.messages ?? [];
+
+    const roleMap: Record<string, string> = {
+      human: 'user',
+      ai: 'assistant',
+      system: 'system',
+      tool: 'tool',
+    };
+
+    return messages.map((m: any) => ({
+      role: roleMap[m?.getType?.() ?? m?.type ?? ''] ?? 'unknown',
+      content:
+        typeof m?.content === 'string'
+          ? m.content
+          : typeof m?.text === 'string'
+            ? m.text
+            : JSON.stringify(m?.content ?? ''),
+      name: m?.name,
+    }));
+  }
+
+  async callbackFun(body: any): Promise<ReadableStream<Uint8Array>> {
+    const agent = this.getAgent();
 
     // 4. 流式接口：返回 ReadableStream，由 controller 边读边写给前端
     const { message, threadId, tool: toolName } = body;
@@ -357,9 +424,7 @@ export class AppService {
       { messages: [systemPrompt, { role: 'user', content: newMes }] },
       { ...config, streamMode: ['updates', 'messages'] },
     )) as AsyncIterable<[string, any]>;
-
     const encoder = new TextEncoder();
-
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
@@ -416,6 +481,7 @@ export class AppService {
     // 重要：查询和入库必须共用同一个 embedding，否则向量空间不一致
     const queryVector = getEmbedding(query);
 
+    // 返回一次性数据
     const result = await collection.query({
       queryEmbeddings: [queryVector],
       nResults,

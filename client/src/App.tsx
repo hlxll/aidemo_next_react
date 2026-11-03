@@ -47,7 +47,7 @@ export function App() {
   const { path, navigate } = useRoute();
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
-  const [answer, setAnswer] = useState('');
+  const [answer, setAnswer] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [openPass, setOpenPass] = useState(false)
   const [listening, setListening] = useState(false);
@@ -59,40 +59,59 @@ export function App() {
   const abortController = useRef<AbortController | null>(null);
   const maxRetries = 5;
   const retriesTime = 1000;
-  const threadIdMax30 = '1234567890'+ new Date().getTime();  //管理唯一的key，后期使用userid拼接
+  const threadIdMax30 = '1234567890';  //管理唯一的key，后期使用userid拼接
+
+  /** 往列表末尾追加一条新内容 */
+  const appendAnswer = (text: string) => {
+    setAnswer((prev) => [...prev, text]);
+  };
+  /** 流式输出时，持续更新最后一条内容 */
+  const updateLastAnswer = (text: string) => {
+    setAnswer((prev) => {
+      if (prev.length === 0) return [text];
+      const next = prev.slice();
+      next[next.length - 1] = text;
+      return next;
+    });
+  };
   useEffect(() => {
+    api.post('/getChatHistory', { threadId: threadIdMax30 }).then(async (res) => {
+      const data = await res.json();
+      const list: Array<{ role: string; content: string }> = data.history ?? [];
+      setAnswer(
+        list
+          .filter((m) => m.role !== 'system')
+          .map((m) => `${m.role === 'user' ? '我' : 'AI'}: ${m.content}`)
+      );
+    }); 
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
   // 工具调用回答
   const callbackFun = async ()=>{
+    setLoading(true);
+    appendAnswer('');
     if(tool === 'knowledge'){
-      setLoading(true);
-      const result = await api.post('/search', { query: question });
-      const reader = result.body.getReader();
-      let buffer = '';
-      const decoder = new TextDecoder();
-      while(true){
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        
-      }
-      const contents = JSON.parse(buffer.trim())?.result?.documents || [];
-      setAnswer(contents.join('\n') || '');
+      // 非流式接口 → 直接 res.json()
+      const res = await api.post('/search', { query: question });
+      const data = await res.json();
+      const docs: string[] = data.result?.documents ?? [];
+      updateLastAnswer(docs.join('\n'));
       setLoading(false);
       return;
     }
     let attempt = 0;
-    while(attempt<maxRetries){
+    
+    abortController.current = new AbortController();
+    while(attempt<maxRetries && abortController.current){
       try{
-        abortController.current = new AbortController();
         const response = await api.post('/chat', { message: question, threadId: threadIdMax30, tool },
           {
             signal: abortController.current.signal,
           }
         );
+        console.log(response)
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -101,18 +120,22 @@ export function App() {
             const { done, value } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
-            console.log(buffer);
-            setAnswer(buffer);
+            updateLastAnswer(buffer);
           }
         }
         break;
-      } catch{
-        await new Promise((resolve)=>{
-          setTimeout(()=>{
-            attempt++;
-            resolve(1);
-          }, 5 * retriesTime)
-        })
+      } catch(err){
+        if(err instanceof Error && err.name.includes('AbortError')){
+          // console.log("手动停止")
+          break;
+        }else{
+          await new Promise((resolve)=>{
+            setTimeout(()=>{
+              attempt++;
+              resolve(1);
+            }, 5 * retriesTime)
+          })
+        }
       } finally {
         setLoading(false);
       }
@@ -120,11 +143,14 @@ export function App() {
   }
   const stopCallback =()=>{
     setLoading(false);
-    setAnswer('');
+    // 停止时把还没产出内容的空条目去掉，已输出的部分保留在列表中
+    setAnswer((prev) =>
+      prev.length > 0 && prev[prev.length - 1] === '' ? prev.slice(0, -1) : prev,
+    );
     abortController.current?.abort();
+    abortController.current = null;
   }
   
-
   const openListen = async () => {
     if (listening) {
       mediaRecorderRef.current?.stop();
@@ -173,14 +199,15 @@ export function App() {
   const inputPDF = async () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.pdf';
+    input.accept = '.pdf, .docx';
     input.onchange = async (event: Event) => {
       const target = event.target as HTMLInputElement;
       const file = target.files[0];
       if (file) {
         const formData = new FormData();
-        const sizeLimit = 10 * 1024 * 1024; // 10MB
+        const sizeLimit = 4 * 1024;
         const fileLength = Math.ceil(file.size / sizeLimit);
+        console.log(fileLength)
         for (let i = 0; i < fileLength; i++) {
           const start = i * sizeLimit;
           const end = Math.min(start + sizeLimit, file.size);
@@ -189,6 +216,11 @@ export function App() {
         }
         try {
           const response = await api.upload('/upload', formData);
+          if(file.name.endsWith('.docx')){
+            const result = await response.json();
+            console.log(result)
+            return;
+          }
           const result = await response.json();
           if (!response.ok) {
             if(result && result.message) {
@@ -204,7 +236,7 @@ export function App() {
             extarctedText += line.trim() + '\n';
           });
           setPdfContent(extarctedText);
-          setAnswer(`文件上传成功，总结：${result.summary}`);
+          appendAnswer(`文件上传成功，总结：${result.summary}`);
         } catch (err) {
           console.error(err);
         }
@@ -223,7 +255,7 @@ export function App() {
           extarctedText += line.trim() + '\n';
         });
         setPdfContent(extarctedText);
-        setAnswer(`文件上传成功，总结：${result.summary}`);
+        appendAnswer(`文件上传成功，总结：${result.summary}`);
       }catch(err){
         console.log(err);
       }
@@ -296,7 +328,18 @@ export function App() {
           <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>{pdfContent}</pre>
         </div>
       )}
-      {answer && <p style={{ marginTop: 16 }}>{answer}</p>}
+      {answer.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          {answer.map((item, index) => (
+            <p
+              key={index}
+              style={{ margin: '6px 0', whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
+            >
+              {item}
+            </p>
+          ))}
+        </div>
+      )}
       {
         openPass?<Password callback={submitPassword} open={openPass}/>:""
       }
