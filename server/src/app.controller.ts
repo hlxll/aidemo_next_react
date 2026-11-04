@@ -65,7 +65,7 @@ export class AppController {
       }else{
         // 上传docx，解析内容，拆分段落
         const result = await this.appService.uploadDOCX(merged, fileName);
-        response.json({
+        response.status(200).json({
           message: 'File uploaded successfully',
           filename: fileName,
           size: merged.length,
@@ -74,7 +74,6 @@ export class AppController {
       }
       
     } catch (error) {
-      
       response.status(400).json({
         message: error,
       });

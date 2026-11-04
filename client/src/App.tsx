@@ -96,8 +96,9 @@ export function App() {
       // 非流式接口 → 直接 res.json()
       const res = await api.post('/search', { query: question });
       const data = await res.json();
-      const docs: string[] = data.result?.documents ?? [];
-      updateLastAnswer(docs.join('\n'));
+      const docs: { summary: { content: string } } = data.result ?? {};
+      console.log(docs);
+      updateLastAnswer(docs.summary?.content);
       setLoading(false);
       return;
     }
@@ -111,7 +112,6 @@ export function App() {
             signal: abortController.current.signal,
           }
         );
-        console.log(response)
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -207,7 +207,6 @@ export function App() {
         const formData = new FormData();
         const sizeLimit = 4 * 1024;
         const fileLength = Math.ceil(file.size / sizeLimit);
-        console.log(fileLength)
         for (let i = 0; i < fileLength; i++) {
           const start = i * sizeLimit;
           const end = Math.min(start + sizeLimit, file.size);
@@ -218,7 +217,11 @@ export function App() {
           const response = await api.upload('/upload', formData);
           if(file.name.endsWith('.docx')){
             const result = await response.json();
-            console.log(result)
+            if(response.status === 200  && response.ok){
+              alert(result.message);
+            }else{
+              alert(result.message?.name);
+            }
             return;
           }
           const result = await response.json();

@@ -10,9 +10,10 @@ import { z } from "zod";
 import { PromptTemplate } from "@langchain/core/prompts"
 import { getChromaClient } from './chroma/index.js';
 import { getEmbedding } from './chroma/embedding.js';
+import type * as ChromaDB from 'chromadb-client';
 
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import mammoth from 'mammoth';
+import { DocxLoader } from "@langchain/community/document_loaders/fs/docx";
 
 
 type VolcanoSummaryResult = {
@@ -78,10 +79,18 @@ export class AppService {
       separators: ['\n\n', '\n', ' ', '.', '。', '!', '?', '；', '，'],
       lengthFunction: (text: string) => text.length,
     });
-    // DOCX 是 zip 压缩包（二进制），不能直接 TextDecoder 解码，
-    // 必须用 mammoth 解包并从 document.xml 抽取纯文本
-    const { value: text } = await mammoth.extractRawText({ buffer: fileData });
-    const chunks = await textSplitter.splitText(text);
+    const loader = new DocxLoader(new Blob([new Uint8Array(fileData)]));
+    const docs = await loader.load();
+    const chunks = await textSplitter.splitDocuments(docs);
+    const collection = await client.getOrCreateCollection({
+      name: 'knowledge',
+    });
+    textSplitter.splitText(docs.reduce((acc, cur) => acc + cur.pageContent, '')).then((text) => {
+      //  存入向量数据库
+      text.forEach(item=>{
+        this.addToChroma(collection, item, fileName);
+      })
+    })
     return chunks;
   }
 
@@ -486,13 +495,12 @@ export class AppService {
       queryEmbeddings: [queryVector],
       nResults,
     });
-
+    // 返回数据给大模型总结，包含id、文档、元数据、距离等
+    const summary = await this.callOpenAI(
+      `请根据以下查询结果，回答这个问题${query}：内容如下\n${JSON.stringify(result)}`);
     return {
-      ids: result.ids?.[0] ?? [],
-      documents: result.documents?.[0] ?? [],
-      metadatas: result.metadatas?.[0] ?? [],
-      distances: result.distances?.[0] ?? [],
-    };
+      summary,
+    }
   }
 
   /**
@@ -509,6 +517,11 @@ export class AppService {
       name: 'knowledge',
     });
 
+    const result = await this.addToChroma(collection, text, id);
+    return result;
+  }
+
+  async addToChroma(collection: ChromaDB.Collection, text: string, id?: string) {
     const embedding = getEmbedding(text);
     const docId = id ?? `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -518,7 +531,6 @@ export class AppService {
       embeddings: [embedding],
       metadatas: [{ source: 'api', createdAt: Date.now() }],
     });
-
     return { id: docId, dimension: embedding.length };
   }
 }
