@@ -287,7 +287,7 @@ export class AppService {
 
     const endpoint = this.configService.get<string>('ARK_ASR_ENDPOINT')
       || this.configService.get<string>('ARK_ENDPOINT')
-      || 'ep-20250401181332-xxxxx';
+      || process.env.DASHSCOPE_DEFAULT_MODEL;
 
     const response = await this.httpService
       .post(

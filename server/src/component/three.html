@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - equirectangular panorama</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	</head>
+	<body>
+
+		<div id="container"></div>
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js webgl</a> - equirectangular panorama demo. photo by <a href="https://www.flickr.com/photos/jonragnarsson/2294472375/" target="_blank" rel="noopener">Jón Ragnarsson</a>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "https://registry.npmmirror.com/three/0.169.0/files/build/three.module.js"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+			let camera, scene, renderer, mesh, spriteTexture;
+
+			// 右键打点用的射线检测
+			const raycaster = new THREE.Raycaster();
+			const pointer = new THREE.Vector2();
+
+			let isUserInteracting = false,
+				onPointerDownMouseX = 0, onPointerDownMouseY = 0,
+				lon = 0, onPointerDownLon = 0,
+				lat = 0, onPointerDownLat = 0,
+				phi = 0, theta = 0;
+
+			init();
+
+			function init() {
+
+				const container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 1100 );
+
+				scene = new THREE.Scene();
+
+				const geometry = new THREE.SphereGeometry( 500, 60, 40 );
+				// invert the geometry on the x-axis so that all of the faces point inward
+				geometry.scale( - 1, 1, 1 );
+
+				const texture = new THREE.TextureLoader().load( 'https://threejs.org/examples/textures/2294472375_24a3b8ef46_o.jpg' );
+				texture.colorSpace = THREE.SRGBColorSpace;
+				const material = new THREE.MeshBasicMaterial( { map: texture } );
+
+				mesh = new THREE.Mesh( geometry, material );
+
+				scene.add( mesh );
+
+				// 精灵图贴图：用同目录下的本地图片
+				// 双击直接打开 html 时，相对路径指向 src/component/image_57.png
+				// 通过 Nest 访问 /three 时，页面地址是 /three，相对路径会解析成 /image_57.png（controller 里单独返回这张图）
+				spriteTexture = new THREE.TextureLoader().load( './image_57.png' );
+				spriteTexture.colorSpace = THREE.SRGBColorSpace;
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setAnimationLoop( animate );
+				container.appendChild( renderer.domElement );
+
+				container.style.touchAction = 'none';
+				container.addEventListener( 'pointerdown', onPointerDown );
+
+				// 右键会弹浏览器菜单，先禁掉，再把右键交给我们自己处理
+				container.addEventListener( 'contextmenu', ( event ) => event.preventDefault() );
+				console.log("绑定右键")
+                container.addEventListener( 'pointerdown', onRightClick );
+                
+				document.addEventListener( 'wheel', onDocumentMouseWheel );
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function onPointerDown( event ) {
+
+				// 只响应左键拖拽，右键留给“添加精灵图”
+				if ( event.isPrimary === false || event.button !== 0 ) return;
+
+				isUserInteracting = true;
+
+				onPointerDownMouseX = event.clientX;
+				onPointerDownMouseY = event.clientY;
+
+				onPointerDownLon = lon;
+				onPointerDownLat = lat;
+
+				document.addEventListener( 'pointermove', onPointerMove );
+				document.addEventListener( 'pointerup', onPointerUp );
+
+			}
+
+			function onPointerMove( event ) {
+
+				if ( event.isPrimary === false ) return;
+
+				lon = ( onPointerDownMouseX - event.clientX ) * 0.1 + onPointerDownLon;
+				lat = ( event.clientY - onPointerDownMouseY ) * 0.1 + onPointerDownLat;
+
+			}
+
+			function onPointerUp( event ) {
+
+				if ( event.isPrimary === false ) return;
+
+				isUserInteracting = false;
+
+				document.removeEventListener( 'pointermove', onPointerMove );
+				document.removeEventListener( 'pointerup', onPointerUp );
+
+			}
+
+			function onDocumentMouseWheel( event ) {
+
+				const fov = camera.fov + event.deltaY * 0.05;
+
+				camera.fov = THREE.MathUtils.clamp( fov, 10, 75 );
+
+				camera.updateProjectionMatrix();
+
+			}
+
+			/** 右键：射线打到全景球面，在命中位置贴一张精灵图切片 */
+			function onRightClick( event, color = "#ffffff", addPoint = true) {
+
+				// if ( event.button !== 2 ) return;
+
+				// 把鼠标坐标换算成 NDC（-1 ~ 1）
+				const rect = renderer.domElement.getBoundingClientRect();
+				pointer.x = ( ( event.clientX - rect.left ) / rect.width ) * 2 - 1;
+				pointer.y = - ( ( event.clientY - rect.top ) / rect.height ) * 2 + 1;
+                if(addPoint){
+					const poniters = localStorage.getItem('pointer');
+					if (poniters === null){
+						localStorage.setItem('pointer', JSON.stringify([{clientX: event.clientX, clientY: event.clientY}]));
+					}else{
+						const pointer = JSON.parse(poniters);
+						pointer.push({clientX: event.clientX, clientY: event.clientY});
+						localStorage.setItem('pointer', JSON.stringify(pointer));
+					}
+				}
+				
+                
+				raycaster.setFromCamera( pointer, camera);
+				const hits = raycaster.intersectObject( mesh, false );
+				if ( hits.length === 0 ) return;
+
+				const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+					map: spriteTexture,
+					color: color, // 贴图是白色圆盘，染成蓝色更显眼
+				}));
+				// 命中点在半径 500 的球面上，往球心挪一点，避免和球面重叠闪烁
+				sprite.position.copy( hits[0].point ).multiplyScalar( 0.97 );
+				sprite.scale.set( 28, 28,  2);
+				scene.add( sprite );
+			}
+			let isError = false;
+			function callFun(){
+				// requestAnimationFrame(()=>{
+					scene.remove(scene.children.slice(1));
+					const poniters = localStorage.getItem('pointer');
+					if (poniters === null){
+						return;
+					}
+					const pointer = JSON.parse(poniters);
+					for (let i = 0; i < pointer.length; i++){
+						onRightClick(pointer[i], isError?'#ffffff':'#000000', false);
+					}
+					isError = !isError;
+				// })
+				// setTimeout(callFun, 1000);
+			}
+			function animate() {
+                callFun();
+				if ( isUserInteracting === false ) {
+
+					// lon += 0.1;
+
+				}
+
+				lat = Math.max( - 85, Math.min( 85, lat ) );
+				phi = THREE.MathUtils.degToRad( 90 - lat );
+				theta = THREE.MathUtils.degToRad( lon );
+
+				const x = 500 * Math.sin( phi ) * Math.cos( theta );
+				const y = 500 * Math.cos( phi );
+				const z = 500 * Math.sin( phi ) * Math.sin( theta );
+
+				camera.lookAt( x, y, z );
+
+				renderer.render( scene, camera );
+			}
+
+		</script>
+	</body>
+</html>
