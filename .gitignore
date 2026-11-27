@@ -4,3 +4,15 @@
 /client/node_modules
 
 .env
+.venv
+
+# SQLite 数据库（运行时自动生成）
+server/app.sqlite
+server/app.sqlite-journal
+
+# macOS 目录索引文件
+.DS_Store
+
+# python
+__pycache__
+.venv
