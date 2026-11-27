@@ -1,50 +1,41 @@
 import { useRef, useState, useEffect } from 'react';
 import { api } from './api';
 import Password from './component/password';
-import AddEmbeddPage from './component/AddEmbeddPage';
 
-/** 极简路径路由（零依赖）。Vite SPA 下配合 history API 工作 */
-function useRoute() {
-  const [path, setPath] = useState<string>(() =>
-    typeof window !== 'undefined' ? window.location.pathname : '/',
-  );
+/** 语音流 WebSocket 地址，默认连本地 Nest 服务 */
+const WS_AUDIO_URL =
+  import.meta.env.VITE_WS_AUDIO_URL ?? 'ws://localhost:3000/audio-stream';
+/** 主流 ASR 服务的输入采样率通常固定为 16k */
+const TARGET_SAMPLE_RATE = 16000;
 
-  useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-
-  const navigate = (to: string) => {
-    window.history.pushState({}, '', to);
-    setPath(to);
-  };
-
-  return { path, navigate };
+/** 线性插值重采样：AudioContext 一般是 48k，需要降到 16k */
+function resampleTo16k(input: Float32Array, fromRate: number): Float32Array {
+  if (fromRate === TARGET_SAMPLE_RATE) return input;
+  const ratio = fromRate / TARGET_SAMPLE_RATE;
+  const length = Math.floor(input.length / ratio);
+  const output = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const pos = i * ratio;
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const a = input[idx] ?? 0;
+    const b = input[idx + 1] ?? a;
+    output[i] = a + (b - a) * frac;
+  }
+  return output;
 }
 
-function NavBar({ path, navigate }: { path: string; navigate: (p: string) => void }) {
-  const items = [
-    { to: '/', label: 'FAQ 助手' },
-    { to: '/addEmbedd', label: '入库 Embedding' },
-  ];
-  return (
-    <nav className="navBar">
-      {items.map((it) => (
-        <button
-          key={it.to}
-          className={path === it.to ? 'nav-active' : ''}
-          onClick={() => navigate(it.to)}
-        >
-          {it.label}
-        </button>
-      ))}
-    </nav>
-  );
+/** Float32 [-1, 1] → Int16 PCM */
+function floatToInt16(input: Float32Array): Int16Array {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const sample = Math.max(-1, Math.min(1, input[i]));
+    output[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return output;
 }
 
 export function App() {
-  const { path, navigate } = useRoute();
   const [question, setQuestion] = useState('');
   const [pdfContent, setPdfContent] = useState('');
   const [answer, setAnswer] = useState<string[]>([]);
@@ -53,9 +44,12 @@ export function App() {
   const [listening, setListening] = useState(false);
   const [tool, setTool] = useState('weather');
   const formDataParam = useRef(new FormData())
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const audioWsRef = useRef<WebSocket | null>(null);
+  /** 等待后端最后一次识别完成的回调 */
+  const finalWaiterRef = useRef<(() => void) | null>(null);
   const abortController = useRef<AbortController | null>(null);
   const maxRetries = 5;
   const retriesTime = 1000;
@@ -74,6 +68,55 @@ export function App() {
       return next;
     });
   };
+  /** 释放麦克风、AudioWorklet 与 WebSocket */
+  const releaseAudio = () => {
+    audioWsRef.current?.close();
+    audioWsRef.current = null;
+    finalWaiterRef.current = null;
+
+    workletNodeRef.current?.port.close();
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
+
+    audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    setListening(false);
+  };
+
+  /**
+   * 优雅停止：WebSocket 保持连接，先停采集并发送 end；
+   * 后端把缓冲区剩余音频全部识别完并回 { clear: true } 后，才真正关闭连接。
+   */
+  const stopListening = async () => {
+    workletNodeRef.current?.port.close();
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
+
+    void audioCtxRef.current?.close();
+    audioCtxRef.current = null;
+
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+
+    const ws = audioWsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 15000);
+        finalWaiterRef.current = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        ws.send('end');
+      });
+    }
+
+    releaseAudio();
+  };
+
   useEffect(() => {
     api.post('/getChatHistory', { threadId: threadIdMax30 }).then(async (res) => {
       const data = await res.json();
@@ -85,7 +128,7 @@ export function App() {
       );
     }); 
     return () => {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      releaseAudio();
     };
   }, []);
   // 工具调用回答
@@ -153,47 +196,85 @@ export function App() {
   
   const openListen = async () => {
     if (listening) {
-      mediaRecorderRef.current?.stop();
-      setListening(false);
+      await stopListening();
       return;
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
       streamRef.current = stream;
-      audioChunksRef.current = [];
 
-      const mr = new MediaRecorder(stream);
-      mediaRecorderRef.current = mr;
+      // 1. 建立 WebSocket，音频以 Int16 PCM 二进制帧持续推送
+      const ws = new WebSocket(WS_AUDIO_URL);
+      ws.binaryType = 'arraybuffer';
+      audioWsRef.current = ws;
 
-      mr.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
+      ws.onmessage = (event) => {
+        if (typeof event.data !== 'string') return;
 
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append('audio', blob, 'recording.webm');
-
+        let text = '';
         try {
-          const res = await api.upload('/audio', formData);
-          const data = await res.json();
-          if (res.ok && data?.text) {
-            setQuestion(data.text);
-          } else {
-            console.warn('语音识别失败:', data);
+          const data = JSON.parse(event.data);
+          // 后端确认本段音频已全部识别完，此时才关闭连接
+          if (data.clear) {
+            finalWaiterRef.current?.();
+            finalWaiterRef.current = null;
+            return;
           }
-        } catch (err) {
-          console.error('上传音频失败:', err);
+          text = data.text ?? data.result ?? data.transcript ?? '';
+        } catch {
+          // 非 JSON 就当成纯文本增量
+          text = event.data;
         }
+        if (text) setQuestion((prev) => prev + text);
       };
 
-      mr.start();
+      ws.onclose = () => {
+        if (audioWsRef.current === ws) releaseAudio();
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error('音频 WebSocket 连接失败'));
+      });
+
+      // 2. 加载 AudioWorklet 模块（public/pcm-worklet.js）
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      await ctx.audioWorklet.addModule('/pcm-worklet.js');
+
+      const source = ctx.createMediaStreamSource(stream);
+      const worklet = new AudioWorkletNode(ctx, 'pcm-collector', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+        processorOptions: { chunkMs: 100 },
+      });
+      workletNodeRef.current = worklet;
+
+      // Worklet 需要连到 destination 才会被持续拉取；用 0 增益避免回声
+      const mute = ctx.createGain();
+      mute.gain.value = 0;
+      source.connect(worklet).connect(mute).connect(ctx.destination);
+
+      // 3. 每 100ms 收到一块 Float32，转 16k Int16 后发出
+      worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const pcm = floatToInt16(resampleTo16k(event.data, ctx.sampleRate));
+        ws.send(pcm.buffer as ArrayBuffer);
+      };
+
       setListening(true);
     } catch (err) {
-      console.error('麦克风权限获取失败:', err);
-      alert('无法访问麦克风，请检查浏览器权限');
+      console.error('语音输入启动失败:', err);
+      releaseAudio();
+      alert('无法访问麦克风或音频服务，请检查浏览器权限');
     }
   }
   const inputPDF = async () => {
@@ -266,19 +347,8 @@ export function App() {
     }
   }
 
-  // 路由出口
-  if (path === '/addEmbedd') {
-    return (
-      <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
-        <NavBar path={path} navigate={navigate} />
-        <AddEmbeddPage />
-      </div>
-    );
-  }
-
   return (
-    <div style={{ maxWidth: 600, margin: '40px auto', padding: 20 }}>
-      <NavBar path={path} navigate={navigate} />
+    <>
       <h1>FAQ 智能问答助手</h1>
       <div className="inputBar">
         <textarea
@@ -346,6 +416,6 @@ export function App() {
       {
         openPass?<Password callback={submitPassword} open={openPass}/>:""
       }
-    </div>
+    </>
   );
 }

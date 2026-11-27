@@ -51,7 +51,7 @@
 }
 
 #root {
-  width: 1126px;
+  width: max-content;
   max-width: 100%;
   margin: 0 auto;
   text-align: center;
@@ -201,6 +201,7 @@ code {
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 
+  a,
   button {
     padding: 6px 14px;
     border: 1px solid var(--border);
@@ -209,15 +210,18 @@ code {
     color: var(--text);
     font-size: 14px;
     cursor: pointer;
+    text-decoration: none;
     transition: background-color 0.15s, border-color 0.15s, color 0.15s;
   }
 
+  a:hover,
   button:hover {
     background: var(--accent-bg);
     border-color: var(--accent-border);
     color: var(--text-h);
   }
 
+  a.nav-active,
   button.nav-active {
     background: var(--accent-bg);
     border-color: var(--accent);
