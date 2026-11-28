@@ -12,6 +12,11 @@ https://pypi.mirrors.ustc.edu.cn/simple
 虚拟环境安装包
 .venv/bin/python3 -m pip install -r requirements.txt:用项目文件更新虚拟环境
 .venv/bin/python3 -m pip install backName:安装后端依赖包
+
+## MySQL
+
+
+# AI 对话项目
 ## 语音解析
 AI 对话项目，建议直接走 Web Audio API + WebSocket + FastAPI 后端；
 如果只是普通语音输入，MediaRecorder + HTTP 就够。

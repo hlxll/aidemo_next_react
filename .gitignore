@@ -13,6 +13,10 @@ server/app.sqlite-journal
 # macOS 目录索引文件
 .DS_Store
 
+# docker 镜像导出包（部署时临时产物）
+ai-demo-images-*.tar.gz
+ai-demo-server.tar.gz
+web-dist.tar.gz
 # python
 __pycache__
 .venv

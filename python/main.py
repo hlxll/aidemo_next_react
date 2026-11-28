@@ -3,11 +3,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import demo
+# from routers import demo
 
-import orderPack.order
 
-from orderPack.order import create_order
+# from orderPack.order import create_order
 app = FastAPI(
     title="AI-Demo FastAPI",
     version="0.1.0",
@@ -25,10 +24,10 @@ app.add_middleware(
 
 # app.include_router(demo.router, prefix="/api", tags=["demo"])
 
-
+# 装饰器
 @app.get("/", tags=["health"])
 async def root() -> dict:
-    create_order()
+    # create_order()
     return {"message": "ok", "service": "fastapi"}
 
 

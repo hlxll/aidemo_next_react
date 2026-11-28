@@ -1,3 +1,5 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 numpy>=1.26.2
+pymysql>=2.2.8
+cryptography>=50.0.2

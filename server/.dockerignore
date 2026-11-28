@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+test
+
+# 运行时产物
+app.sqlite
+app.sqlite-journal
+
+# 本地配置，构建时不应打进镜像
+.env
+.env.*
+
+*.tsbuildinfo
+.DS_Store
+README.md

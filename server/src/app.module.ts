@@ -12,7 +12,8 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
   imports: [
     TypeOrmModule.forRoot({
       type: 'better-sqlite3',
-      database: 'app.sqlite',
+      // 默认放当前目录；容器里用 DB_PATH 指到可写的挂载目录
+      database: process.env.DB_PATH ?? 'app.sqlite',
       // 自动把各个 forFeature 注册的实体纳入连接（ESM 下别用 entities 通配符路径）
       autoLoadEntities: true,
       // 仅开发环境：自动建表/改表，生产必须关掉改用 migration

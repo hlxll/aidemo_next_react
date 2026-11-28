@@ -1,6 +1,9 @@
 type RequestBody = Record<string, unknown>;
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000';
+// 生产：同源 /api（由 nginx 转发到 NestJS）
+// 本地开发：直接连 3000，可用 VITE_API_BASE_URL 覆盖
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:3000' : '/api');
 async function post(url: string, body: RequestBody, options?:{signal?: AbortSignal, method?:string}) {
     const response = await fetch(`${API_BASE_URL}${url}`, {
         method: options?.method ?? 'POST',

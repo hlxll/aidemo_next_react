@@ -2,9 +2,12 @@ import { useRef, useState, useEffect } from 'react';
 import { api } from './api';
 import Password from './component/password';
 
-/** 语音流 WebSocket 地址，默认连本地 Nest 服务 */
+/** 语音流 WebSocket 地址：生产同源 /api/audio-stream，开发连本地 3000 */
 const WS_AUDIO_URL =
-  import.meta.env.VITE_WS_AUDIO_URL ?? 'ws://localhost:3000/audio-stream';
+  import.meta.env.VITE_WS_AUDIO_URL ??
+  (import.meta.env.DEV
+    ? 'ws://localhost:3000/audio-stream'
+    : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/audio-stream`);
 /** 主流 ASR 服务的输入采样率通常固定为 16k */
 const TARGET_SAMPLE_RATE = 16000;
 
@@ -283,7 +286,7 @@ export function App() {
     input.accept = '.pdf, .docx';
     input.onchange = async (event: Event) => {
       const target = event.target as HTMLInputElement;
-      const file = target.files[0];
+      const file = target.files?.[0];
       if (file) {
         const formData = new FormData();
         const sizeLimit = 4 * 1024;
